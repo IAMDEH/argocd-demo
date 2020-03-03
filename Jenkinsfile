@@ -1,72 +1,58 @@
 pipeline {
-  agent {
-    kubernetes {
-      label 'jenkins-slave'
-      defaultContainer 'jnlp'
-      yaml """
-apiVersion: v1
-kind: Pod
-spec:
-  containers:
-  - name: dind
-    image: docker:18.09-dind
-    securityContext:
-      privileged: true
-  - name: docker
-    env:
-    - name: DOCKER_HOST
-      value: 127.0.0.1
-    image: docker:18.09
-    command:
-    - cat
-    tty: true
-  - name: tools
-    image: argoproj/argo-cd-ci-builder:v0.13.1
-    command:
-    - cat
-    tty: true
-"""
-    }
+  
+  agent none
+
+  environment {
+
+        GIT_CREDS = credentials('git')
   }
+
   stages {
 
     stage('Build') {
+      agent {
+        label "master"
+      }
       steps {
-        container('docker') {
           // Build new image
-          sh "docker build -t 10.1.3.94:5000/demo:${env.GIT_COMMIT} ."
+          sh "docker build -t 10.10.10.14:5000/demo:${env.GIT_COMMIT} ."
           // Publish new image
-          sh "docker push 10.1.3.94:5000/demo:${env.GIT_COMMIT}"
-        }
+          sh "docker push 10.10.10.14:5000/demo:${env.GIT_COMMIT}"
       }
     }
 
-    stage('Deploy E2E') {
-      environment {
-        GIT_CREDS = credentials('git')
+    stage('Promote to Staging') {
+      agent {
+          docker {
+              image 'argoproj/argo-cd-ci-builder:v0.13.1'
+              args '--tty'
+          }
       }
       steps {
-        container('tools') {
+          sh "rm -rf ./argocd-demo-deploy"
           sh "git clone https://$GIT_CREDS_USR:$GIT_CREDS_PSW@github.com/IAMDEH/argocd-demo-deploy.git"
-          sh "git config --global user.email 'ee_izri@esi.dz'"
 
           dir("argocd-demo-deploy") {
-            sh "cd ./e2e && kustomize edit set image 10.1.3.94:5000/demo:${env.GIT_COMMIT}"
+            sh "cd ./e2e && kustomize edit set image 10.10.10.14:5000/demo:${env.GIT_COMMIT}"
             sh "git commit -am 'Publish new version' && git push || echo 'no changes'"
           }
-        }
       }
     }
 
-    stage('Deploy to Prod') {
+    stage('Promote to Prod') {
+      agent {
+          docker {
+              image 'argoproj/argo-cd-ci-builder:v0.13.1'
+              args '--tty'
+          }
+      }
       steps {
-        input message:'Approve deployment?'
-        container('tools') {
+          input message:'Approve deployment?'
+
           dir("argocd-demo-deploy") {
-            sh "cd ./prod && kustomize edit set image 10.1.3.94:5000/demo:${env.GIT_COMMIT}"
+            sh "cd ./prod && kustomize edit set image 10.10.10.14:5000/demo:${env.GIT_COMMIT}"
             sh "git commit -am 'Publish new version' && git push || echo 'no changes'"
           }
-        }
       }
     }
   }
